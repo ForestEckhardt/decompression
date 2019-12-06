@@ -8,16 +8,28 @@ import (
 	"path/filepath"
 )
 
-func UnTar(compressionReader io.Reader, destination string) error {
-	tr := tar.NewReader(compressionReader)
+//go:generate faux --interface Decompressor --output fakes/decompressor.go
+type Decompressor interface {
+	UnTar(destination string) error
+}
+
+type ArchiveReader struct {
+	Reader io.Reader
+}
+
+func NewArchiveReader(inputReader io.Reader) ArchiveReader {
+	return ArchiveReader{Reader: inputReader}
+}
+
+func (a ArchiveReader) UnTar(destination string) error {
+	tr := tar.NewReader(a.Reader)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			panic(err)
-			// return fmt.Errorf("failed to read tar response: %s", err.Error())
+			return fmt.Errorf("failed to read tar response: %s", err.Error())
 		}
 
 		path := filepath.Join(destination, hdr.Name)
@@ -25,27 +37,24 @@ func UnTar(compressionReader io.Reader, destination string) error {
 		case tar.TypeDir:
 			err = os.MkdirAll(path, hdr.FileInfo().Mode())
 			if err != nil {
-				panic(err)
-				// return fmt.Errorf("failed to create archived directory: %s", err.Error())
+				return fmt.Errorf("failed to create archived directory: %s", err.Error())
 			}
 
 		case tar.TypeReg:
-			fmt.Println(hdr.FileInfo().Mode())
 			file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, hdr.FileInfo().Mode())
 			if err != nil {
-				panic(err)
-				// return fmt.Errorf("failed to create file %s", err.Error())
+				return fmt.Errorf("failed to create archived file %s", err.Error())
 			}
-			defer file.Close()
 
 			_, err = io.Copy(file, tr)
 			if err != nil {
 				return err
 			}
-			// err := writeStreamingFile(tr, path, )
-			// if err != nil {
-			// 	return fmt.Errorf("failed to stream file from archive: %s", err.Error())
-			// }
+
+			err = file.Close()
+			if err != nil {
+				return err
+			}
 		}
 	}
 

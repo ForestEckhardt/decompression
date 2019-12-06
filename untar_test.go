@@ -4,8 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"fmt"
-	"io"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -17,17 +17,13 @@ import (
 
 func testUnTar(t *testing.T, context spec.G, it spec.S) {
 	var (
-		Expect func(interface{}, ...interface{}) Assertion
-	)
-
-	it.Before(func() {
 		Expect = NewWithT(t).Expect
-	})
+	)
 
 	context("UnTar", func() {
 		var (
 			tempDir string
-			reader  io.Reader
+			reader  decompression.ArchiveReader
 		)
 
 		it.Before(func() {
@@ -35,7 +31,6 @@ func testUnTar(t *testing.T, context spec.G, it spec.S) {
 			tempDir, err = ioutil.TempDir("", "decompression")
 			Expect(err).NotTo(HaveOccurred())
 
-			reader = bytes.NewReader(nil)
 			buffer := bytes.NewBuffer(nil)
 			tw := tar.NewWriter(buffer)
 
@@ -58,19 +53,19 @@ func testUnTar(t *testing.T, context spec.G, it spec.S) {
 				Expect(err).NotTo(HaveOccurred())
 			}
 
-			reader = bytes.NewReader(buffer.Bytes())
+			reader = decompression.NewArchiveReader(bytes.NewReader(buffer.Bytes()))
 
 			Expect(tw.Close()).To(Succeed())
 
 		})
 
 		it.After(func() {
-			// Expect(os.RemoveAll(tempDir)).To(Succeed())
+			Expect(os.RemoveAll(tempDir)).To(Succeed())
 		})
 
 		it("downloads the dependency and unpackages it into the path", func() {
 			var err error
-			err = decompression.UnTar(reader, tempDir)
+			err = reader.UnTar(tempDir)
 			Expect(err).ToNot(HaveOccurred())
 
 			files, err := filepath.Glob(fmt.Sprintf("%s/*", tempDir))
@@ -82,12 +77,53 @@ func testUnTar(t *testing.T, context spec.G, it spec.S) {
 				filepath.Join(tempDir, "some-dir"),
 			}))
 
-			// info, err := os.Stat(filepath.Join(tempDir, "first"))
-			// Expect(err).NotTo(HaveOccurred())
-			// Expect(info.Mode()).To(Equal(os.FileMode(0777)))
+			info, err := os.Stat(filepath.Join(tempDir, "first"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(info.Mode()).To(Equal(os.FileMode(0755)))
 
-			Expect(filepath.Join(tempDir, "some-dir", "some-other-dir")).To(BeARegularFile())
+			Expect(filepath.Join(tempDir, "some-dir", "some-other-dir")).To(BeADirectory())
 			Expect(filepath.Join(tempDir, "some-dir", "some-other-dir", "some-file")).To(BeARegularFile())
+		})
+
+		context("failure cases", func() {
+			context("when it fails to read the tar response", func() {
+				it("returns an error", func() {
+					err := decompression.NewArchiveReader(bytes.NewBuffer([]byte(`something`))).UnTar(tempDir)
+					Expect(err).To(MatchError(ContainSubstring("failed to read tar response")))
+
+				})
+			})
+
+			context("when it is unable to create an archived directory", func() {
+				it.Before(func() {
+					Expect(os.Chmod(tempDir, 0000)).To(Succeed())
+				})
+
+				it.After(func() {
+					Expect(os.Chmod(tempDir, os.ModePerm)).To(Succeed())
+				})
+
+				it("returns an error", func() {
+					err := reader.UnTar(tempDir)
+					Expect(err).To(MatchError(ContainSubstring("failed to create archived directory")))
+				})
+			})
+
+			context("when it is unable to create an archived file", func() {
+				it.Before(func() {
+					Expect(os.MkdirAll(filepath.Join(tempDir, "some-dir", "some-other-dir"), os.ModePerm)).To(Succeed())
+					Expect(os.Chmod(filepath.Join(tempDir, "some-dir", "some-other-dir"), 0000)).To(Succeed())
+				})
+
+				it.After(func() {
+					Expect(os.Chmod(filepath.Join(tempDir, "some-dir", "some-other-dir"), os.ModePerm)).To(Succeed())
+				})
+
+				it("returns an error", func() {
+					err := reader.UnTar(tempDir)
+					Expect(err).To(MatchError(ContainSubstring("failed to create archived file")))
+				})
+			})
 		})
 	})
 }
