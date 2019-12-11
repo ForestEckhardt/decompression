@@ -1,34 +1,114 @@
-package decompression_test
+package vacation_test
 
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/ForestEckhardt/decompression"
+	"github.com/ForestEckhardt/decompression/vacation"
 	"github.com/sclevine/spec"
 
 	. "github.com/onsi/gomega"
 )
 
-func testUnTar(t *testing.T, context spec.G, it spec.S) {
+func testVacation(t *testing.T, context spec.G, it spec.S) {
 	var (
 		Expect = NewWithT(t).Expect
 	)
 
-	context("UnTar", func() {
+	context("NewTarReader", func() {
 		var (
-			tempDir string
-			reader  decompression.ArchiveReader
+			inputReader *bytes.Reader
+		)
+
+		it.Before(func() {
+			inputReader = bytes.NewReader(nil)
+		})
+
+		context("when new tar reader is called", func() {
+			it("returns a TarReadyReader object", func() {
+				reader, err := vacation.NewTarReader(inputReader)
+				Expect(err).ToNot(HaveOccurred())
+
+				bufFinal := bytes.NewBuffer(nil)
+				_, err = io.Copy(bufFinal, reader)
+				Expect(err).ToNot(HaveOccurred())
+
+				bufCompare := bytes.NewBuffer(nil)
+				_, err = io.Copy(bufCompare, reader)
+				Expect(err).ToNot(HaveOccurred())
+
+				Expect(bufFinal).To(Equal(bufCompare))
+			})
+		})
+	})
+
+	context("NewGzipTarReader", func() {
+		context("when the archive format is gzip tar", func() {
+			var gzipReader *bytes.Reader
+
+			it.Before(func() {
+				var err error
+				buffer := bytes.NewBuffer(nil)
+				gzipWriter := gzip.NewWriter(buffer)
+				tw := tar.NewWriter(gzipWriter)
+
+				Expect(tw.WriteHeader(&tar.Header{Name: "some-file", Mode: 0755, Size: int64(len("some-file"))})).To(Succeed())
+				_, err = tw.Write([]byte("some-file"))
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(gzipWriter.Close()).To(Succeed())
+				Expect(tw.Close()).To(Succeed())
+
+				gzipReader = bytes.NewReader(buffer.Bytes())
+			})
+
+			it("returns a GZTarExtractor object", func() {
+				reader, err := vacation.NewGzipTarReader(gzipReader)
+				Expect(err).ToNot(HaveOccurred())
+
+				bufFinal := bytes.NewBuffer(nil)
+				_, err = io.Copy(bufFinal, reader)
+				Expect(err).ToNot(HaveOccurred())
+
+				_, err = gzipReader.Seek(0, 0)
+				Expect(err).ToNot(HaveOccurred())
+
+				gzipResults, err := gzip.NewReader(gzipReader)
+				Expect(err).ToNot(HaveOccurred())
+
+				bufCompare := bytes.NewBuffer(nil)
+				_, err = io.Copy(bufCompare, gzipResults)
+				Expect(err).ToNot(HaveOccurred())
+
+				Expect(bufFinal.Bytes()).To(Equal(bufCompare.Bytes()))
+			})
+
+			context("failure case", func() {
+				it("returns an error", func() {
+					_, err := vacation.NewGzipTarReader(bytes.NewBuffer([]byte(`something`)))
+					Expect(err).To(MatchError(ContainSubstring("failed to create gzip reader")))
+				})
+			})
+		})
+
+	})
+
+	context("TarReadyReader.Decompress", func() {
+		var (
+			tempDir        string
+			tarReadyReader vacation.TarReadyReader
 		)
 
 		it.Before(func() {
 			var err error
-			tempDir, err = ioutil.TempDir("", "decompression")
+			tempDir, err = ioutil.TempDir("", "vacation")
 			Expect(err).NotTo(HaveOccurred())
 
 			buffer := bytes.NewBuffer(nil)
@@ -53,7 +133,8 @@ func testUnTar(t *testing.T, context spec.G, it spec.S) {
 				Expect(err).NotTo(HaveOccurred())
 			}
 
-			reader = decompression.NewArchiveReader(bytes.NewReader(buffer.Bytes()))
+			tarReadyReader, err = vacation.NewTarReader(bytes.NewReader(buffer.Bytes()))
+			Expect(err).NotTo(HaveOccurred())
 
 			Expect(tw.Close()).To(Succeed())
 
@@ -65,7 +146,7 @@ func testUnTar(t *testing.T, context spec.G, it spec.S) {
 
 		it("downloads the dependency and unpackages it into the path", func() {
 			var err error
-			err = reader.UnTar(tempDir)
+			err = tarReadyReader.Decompress(tempDir)
 			Expect(err).ToNot(HaveOccurred())
 
 			files, err := filepath.Glob(fmt.Sprintf("%s/*", tempDir))
@@ -88,7 +169,10 @@ func testUnTar(t *testing.T, context spec.G, it spec.S) {
 		context("failure cases", func() {
 			context("when it fails to read the tar response", func() {
 				it("returns an error", func() {
-					err := decompression.NewArchiveReader(bytes.NewBuffer([]byte(`something`))).UnTar(tempDir)
+					readyReader, err := vacation.NewTarReader(bytes.NewBuffer([]byte(`something`)))
+					Expect(err).NotTo(HaveOccurred())
+
+					err = readyReader.Decompress(tempDir)
 					Expect(err).To(MatchError(ContainSubstring("failed to read tar response")))
 
 				})
@@ -104,7 +188,7 @@ func testUnTar(t *testing.T, context spec.G, it spec.S) {
 				})
 
 				it("returns an error", func() {
-					err := reader.UnTar(tempDir)
+					err := tarReadyReader.Decompress(tempDir)
 					Expect(err).To(MatchError(ContainSubstring("failed to create archived directory")))
 				})
 			})
@@ -120,7 +204,7 @@ func testUnTar(t *testing.T, context spec.G, it spec.S) {
 				})
 
 				it("returns an error", func() {
-					err := reader.UnTar(tempDir)
+					err := tarReadyReader.Decompress(tempDir)
 					Expect(err).To(MatchError(ContainSubstring("failed to create archived file")))
 				})
 			})

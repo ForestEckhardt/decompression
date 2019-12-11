@@ -1,31 +1,34 @@
-package decompression
+package vacation
 
 import (
 	"archive/tar"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 )
 
-//go:generate faux --interface decompressTar --output fakes/decompress_tar.go
-type decompressTar interface {
-	UnTar(destination string) error
-	GetReader() io.Reader
+type TarReadyReader struct {
+	io.Reader
 }
 
-type ArchiveReader struct {
-	Reader io.Reader
+func NewTarReader(inputReader io.Reader) (TarReadyReader, error) {
+	return TarReadyReader{inputReader}, nil
 }
 
-func NewArchiveReader(inputReader io.Reader) ArchiveReader {
-	return ArchiveReader{Reader: inputReader}
+func NewGzipTarReader(inputReader io.Reader) (TarReadyReader, error) {
+	gzipReader, err := gzip.NewReader(inputReader)
+	if err != nil {
+		return TarReadyReader{nil}, fmt.Errorf("failed to create gzip reader: %s", err.Error())
+	}
+	return TarReadyReader{gzipReader}, nil
 }
 
-func (a ArchiveReader) UnTar(destination string) error {
-	tr := tar.NewReader(a.Reader)
+func (tr TarReadyReader) Decompress(destination string) error {
+	tarReader := tar.NewReader(tr)
 	for {
-		hdr, err := tr.Next()
+		hdr, err := tarReader.Next()
 		if err == io.EOF {
 			break
 		}
@@ -47,7 +50,7 @@ func (a ArchiveReader) UnTar(destination string) error {
 				return fmt.Errorf("failed to create archived file %s", err.Error())
 			}
 
-			_, err = io.Copy(file, tr)
+			_, err = io.Copy(file, tarReader)
 			if err != nil {
 				return err
 			}
@@ -60,8 +63,4 @@ func (a ArchiveReader) UnTar(destination string) error {
 	}
 
 	return nil
-}
-
-func (a ArchiveReader) GetReader() io.Reader {
-	return a.Reader
 }
