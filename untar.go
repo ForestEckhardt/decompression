@@ -8,9 +8,10 @@ import (
 	"path/filepath"
 )
 
-//go:generate faux --interface Decompressor --output fakes/decompressor.go
-type Decompressor interface {
+//go:generate faux --interface decompressTar --output fakes/decompress_tar.go
+type decompressTar interface {
 	UnTar(destination string) error
+	GetReader() io.Reader
 }
 
 type ArchiveReader struct {
@@ -59,4 +60,8 @@ func (a ArchiveReader) UnTar(destination string) error {
 	}
 
 	return nil
+}
+
+func (a ArchiveReader) GetReader() io.Reader {
+	return a.Reader
 }

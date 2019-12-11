@@ -11,33 +11,28 @@ type ArchiveFormat string
 const (
 	Tar   ArchiveFormat = "tar"
 	GZTar ArchiveFormat = "gzip tar"
-	XZTar ArchiveFormat = "xz tar"
 )
 
-type Extractor interface {
-	Extract(destination string) error
+type Decompressor struct {
+	Reader decompressTar
 }
 
-type ArchiveExtractor struct {
-	Reader Decompressor
-}
-
-func NewExtractor(inputReader io.Reader, archiveFormat ArchiveFormat) (Extractor, error) {
+func NewDecompressor(inputReader io.Reader, archiveFormat ArchiveFormat) (Decompressor, error) {
 	switch archiveFormat {
 	case Tar:
-		return ArchiveExtractor{Reader: NewArchiveReader(inputReader)}, nil
+		return Decompressor{Reader: NewArchiveReader(inputReader)}, nil
 	case GZTar:
 		gzr, err := gzip.NewReader(inputReader)
 		if err != nil {
-			return ArchiveExtractor{}, fmt.Errorf("failed to create gzip reader: %s", err.Error())
+			return Decompressor{}, fmt.Errorf("failed to create gzip reader: %s", err.Error())
 		}
-		return ArchiveExtractor{Reader: NewArchiveReader(gzr)}, nil
+		return Decompressor{Reader: NewArchiveReader(gzr)}, nil
 	}
-	return ArchiveExtractor{}, nil
+	return Decompressor{}, nil
 }
 
-func (a ArchiveExtractor) Extract(destination string) error {
-	err := a.Reader.UnTar(destination)
+func (d Decompressor) Decompress(destination string) error {
+	err := d.Reader.UnTar(destination)
 	if err != nil {
 		return err
 	}
